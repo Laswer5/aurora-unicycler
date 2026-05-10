@@ -8,6 +8,7 @@ different formats:
   - tomato 0.2.3 .json
   - PyBaMM string list
   - BattINFO .jsonld
+  - PalmSens MethodSCRIPT
 
 This is particularly useful for high-throughput battery experiments, as
 protocols can be programmatically defined, and sample IDs and capacities can be

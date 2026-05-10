@@ -48,7 +48,15 @@ A unicycler CyclingProtocol object can be converted into:
 from pathlib import Path
 
 from aurora_unicycler._core import BaseProtocol
-from aurora_unicycler._formats import battinfo, biologic, neware, pybamm, tomato
+from aurora_unicycler._formats import (
+    battinfo,
+    biologic,
+    neware,
+    palmsens as palmsens_format,
+    pybamm,
+    tomato,
+)
+from aurora_unicycler.palmsens import PalmSensDevice
 
 
 class CyclingProtocol(BaseProtocol):
@@ -146,6 +154,48 @@ class CyclingProtocol(BaseProtocol):
 
         """
         return pybamm.to_pybamm_experiment(self)
+
+    def to_palmsens_methodscript(  # noqa: PLR0913
+        self,
+        save_path: Path | str | None = None,
+        sample_name: str | None = None,
+        capacity_mAh: float | None = None,  # noqa: N803
+        device: PalmSensDevice | str = PalmSensDevice.EMSTAT4_HR,
+        channel: int = 0,
+        scan_step_voltage_V: float | None = None,  # noqa: N803
+        eis_dc_potential_V: float = 0.0,  # noqa: N803
+        eis_dc_current_mA: float = 0.0,  # noqa: N803
+    ) -> str:
+        """Convert protocol to PalmSens MethodSCRIPT.
+
+        Args:
+            save_path: (optional) File path of where to save the MethodSCRIPT file.
+            sample_name: (optional) Override the protocol sample name.
+            capacity_mAh: (optional) Override the protocol sample capacity.
+            device: PalmSens device profile to validate against.
+            channel: PGStat channel index. Not all instruments support multiple
+                PGStat channels; the default `0` selects the first channel and
+                should be supported on all supported instruments.
+            scan_step_voltage_V: Voltage step size for voltage scans. If unset,
+                `record.voltage_V` is used.
+            eis_dc_potential_V: DC potential offset for potentiostatic EIS.
+            eis_dc_current_mA: DC current offset for galvanostatic EIS.
+
+        Returns:
+            MethodSCRIPT string representation of the protocol.
+
+        """
+        return palmsens_format.to_palmsens_methodscript(
+            self,
+            save_path,
+            sample_name,
+            capacity_mAh,
+            device,
+            channel,
+            scan_step_voltage_V,
+            eis_dc_potential_V,
+            eis_dc_current_mA,
+        )
 
     def to_tomato_mpg2(
         self,

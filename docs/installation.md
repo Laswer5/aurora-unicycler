@@ -10,5 +10,5 @@ install as editable with developer dependencies
 ```
 git clone https://github.com/empaeconversion/aurora-unicycler.git
 cd aurora-unicycler
-pip install -e .[dev]
+pip install -e ".[dev]"
 ```

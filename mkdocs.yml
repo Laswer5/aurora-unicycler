@@ -41,6 +41,7 @@ nav:
   - Exporting a protocol:
     - To Biologic mps: biologic.md
     - To Neware xml: neware.md
+    - To PalmSens MethodSCRIPT: palmsens.md
     - To PyBaMM: pybamm.md
     - To BattINFO: battinfo.md
   - API Reference: api.md
