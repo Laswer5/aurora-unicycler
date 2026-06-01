@@ -104,7 +104,6 @@ PALMSENS_PROFILES: dict[PalmSensDevice, PalmSensProfile] = {
     ),
 }
 
-
 class _Renderer:
     """Render a normalized protocol to MethodSCRIPT lines."""
 
@@ -211,23 +210,32 @@ class _Renderer:
                 raise NotImplementedError(msg)
 
     def _render_ocv(self, step: _core.OpenCircuitVoltage) -> list[str]:
+        command, extra_vars = self._measurement_command(
+            f"meas_loop_ocp p {self._ms_float(self.protocol.record.time_s)} "
+            f"{self._ms_float(step.until_time_s)}",
+            {"ab"},
+        )
         return [
             "# Open circuit voltage",
             "cell_off",
             f"# Measure OCV every {self._ms_float(self.protocol.record.time_s)} s "
             f"for {self._ms_float(step.until_time_s)} s.",
             self._measurement_loop(
-                f"meas_loop_ocp p {self._ms_float(self.protocol.record.time_s)} "
-                f"{self._ms_float(step.until_time_s)} "
-                f"{self._add_meas_args({'ab'})} time(t)".strip(),
+                command,
                 primary_vars=("p",),
-                extra_vars=self._extra_measurement_variables({"ab"}),
+                extra_vars=extra_vars,
             ),
         ]
 
     def _render_cc(self, step: _core.ConstantCurrent) -> list[str]:
         current_ma = self._step_current_ma(step)
         run_time_s = step.until_time_s or self._fallback_runtime_s()
+        command, extra_vars = self._measurement_command(
+            f"meas_loop_cp p i {self._ms_float(current_ma / 1000)} "
+            f"{self._ms_float(self.protocol.record.time_s)} "
+            f"{self._ms_float(run_time_s)}",
+            {"ab"},
+        )
         return [
             "# Constant current",
             "cell_off",
@@ -239,18 +247,21 @@ class _Renderer:
             f"set_i {self._ms_float(current_ma / 1000)}",
             "cell_on",
             self._measurement_loop(
-                f"meas_loop_cp p i {self._ms_float(current_ma / 1000)} "
-                f"{self._ms_float(self.protocol.record.time_s)} "
-                f"{self._ms_float(run_time_s)} "
-                f"{self._add_meas_args({'ab'})} time(t)".strip(),
+                command,
                 primary_vars=("p", "i"),
-                extra_vars=self._extra_measurement_variables({"ab"}),
+                extra_vars=extra_vars,
                 break_lines=self._cc_break_lines(step, current_ma),
             ),
         ]
 
     def _render_cv(self, step: _core.ConstantVoltage) -> list[str]:
         run_time_s = step.until_time_s or self._fallback_runtime_s()
+        command, extra_vars = self._measurement_command(
+            f"meas_loop_ca p i {self._ms_float(step.voltage_V)} "
+            f"{self._ms_float(self.protocol.record.time_s)} "
+            f"{self._ms_float(run_time_s)}",
+            {"ba"},
+        )
         return [
             "# Constant voltage",
             "cell_off",
@@ -265,12 +276,9 @@ class _Renderer:
             f"set_e {self._ms_float(step.voltage_V)}",
             "cell_on",
             self._measurement_loop(
-                f"meas_loop_ca p i {self._ms_float(step.voltage_V)} "
-                f"{self._ms_float(self.protocol.record.time_s)} "
-                f"{self._ms_float(run_time_s)} "
-                f"{self._add_meas_args({'ba'})} time(t)".strip(),
+                command,
                 primary_vars=("p", "i"),
-                extra_vars=self._extra_measurement_variables({"ba"}),
+                extra_vars=extra_vars,
                 break_lines=self._cv_break_lines(step),
             ),
         ]
@@ -278,6 +286,12 @@ class _Renderer:
     def _render_lsv(self, step: _core.VoltageScan) -> list[str]:
         step_voltage = self.scan_step_voltage_v or self.protocol.record.voltage_V
         assert step_voltage is not None  # noqa: S101
+        command, extra_vars = self._measurement_command(
+            f"meas_loop_lsv p i {self._ms_float(step.start_voltage_V)} "
+            f"{self._ms_float(step.end_voltage_V)} {self._ms_float(abs(step_voltage))} "
+            f"{self._ms_float(step.scan_rate_mV_per_s / 1000)}",
+            {"ba"},
+        )
         return [
             "# Linear sweep voltammetry",
             "cell_off",
@@ -287,12 +301,9 @@ class _Renderer:
             f"steps at {self._ms_float(step.scan_rate_mV_per_s / 1000)} V/s.",
             "cell_on",
             self._measurement_loop(
-                f"meas_loop_lsv p i {self._ms_float(step.start_voltage_V)} "
-                f"{self._ms_float(step.end_voltage_V)} {self._ms_float(abs(step_voltage))} "
-                f"{self._ms_float(step.scan_rate_mV_per_s / 1000)} "
-                f"{self._add_meas_args({'ba'})} time(t)".strip(),
+                command,
                 primary_vars=("p", "i"),
-                extra_vars=self._extra_measurement_variables({"ba"}),
+                extra_vars=extra_vars,
             ),
         ]
 
@@ -343,6 +354,8 @@ class _Renderer:
         break_lines: list[str] | None = None,
     ) -> str:
         body = [
+            # Undvik time(t) som kanske inte stöds av gammal hårdvara
+            "timer_get t",
             "pck_start",
             "pck_add t",
             *(f"pck_add {var}" for var in primary_vars),
@@ -353,12 +366,13 @@ class _Renderer:
         ]
         return "\n".join([command, *self._indent(body)])
 
-    def _add_meas_args(self, primary_var_types: set[str]) -> str:
-        args = [
-            f"add_meas({self.channel} {var.var_type} {self._var_name(var.var_type)})"
-            for var in self._extra_measurement_variables(primary_var_types)
-        ]
-        return " ".join(args)
+    def _measurement_command(
+        self,
+        base_command: str,
+        primary_var_types: set[str],
+    ) -> tuple[str, tuple[MeasurementVariable, ...]]:
+        # Äldre potentiostater stödjer inte add_meas(...)
+        return base_command, ()
 
     def _extra_measurement_variables(
         self,
