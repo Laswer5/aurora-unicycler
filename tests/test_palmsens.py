@@ -31,36 +31,57 @@ def test_palmsens_device_normalization() -> None:
     assert enum_script.endswith("\n\n")
 
 
-def test_emstat4_variables_are_measured() -> None:
-    """EmStat4 scripts include add_meas calls for all non-primary variables."""
+def test_emstat4_default_variables_are_minimal() -> None:
+    """EmStat4 scripts avoid optional add_meas variables by default."""
     protocol = CyclingProtocol(
         record=RecordParams(time_s=1),
         method=[ConstantVoltage(voltage_V=1, until_time_s=2)],
     )
     script = protocol.to_palmsens_methodscript(device=PalmSensDevice.EMSTAT4_HR)
     assert "meas_loop_ca p i 1 1 2" in script
-    assert "add_meas(0 ab meas_ab)" in script
-    assert "add_meas(0 ac meas_ac)" in script
-    assert "add_meas(0 ae meas_ae)" in script
-    assert "add_meas(0 ag meas_ag)" in script
-    assert "add_meas(0 as meas_as)" in script
-    assert "pck_add meas_ab" in script
-    assert "add_meas(0 ba meas_ba)" not in script
+    assert "add_meas(" not in script
+    assert "var meas_" not in script
+    assert "var f" not in script
+    assert "pck_add t" in script
+    assert "pck_add p" in script
+    assert "pck_add i" in script
 
 
-def test_nexus_variables_are_measured() -> None:
-    """Nexus scripts include Nexus-specific supported variables."""
+def test_emstat4_additional_measurements_are_opt_in() -> None:
+    """Supported EmStat4 add_meas variables can be requested explicitly."""
     protocol = CyclingProtocol(
         record=RecordParams(time_s=1),
         method=[ConstantVoltage(voltage_V=1, until_time_s=2)],
     )
-    script = protocol.to_palmsens_methodscript(device=PalmSensDevice.NEXUS)
+    script = protocol.to_palmsens_methodscript(
+        device=PalmSensDevice.EMSTAT4_HR,
+        additional_measurements=("ab", "ac", "ab"),
+    )
+    assert "var meas_ab" in script
+    assert "var meas_ac" in script
+    assert "var meas_ab\nvar meas_ac" in script
+    assert "add_meas(0 ab meas_ab)" in script
+    assert "add_meas(0 ac meas_ac)" in script
+    assert "pck_add meas_ab" in script
+    assert "pck_add meas_ac" in script
+    assert "add_meas(0 ae meas_ae)" not in script
+    assert "add_meas(0 ba meas_ba)" not in script
+
+
+def test_nexus_additional_measurements_are_opt_in() -> None:
+    """Nexus scripts include requested Nexus-specific variables."""
+    protocol = CyclingProtocol(
+        record=RecordParams(time_s=1),
+        method=[ConstantVoltage(voltage_V=1, until_time_s=2)],
+    )
+    script = protocol.to_palmsens_methodscript(
+        device=PalmSensDevice.NEXUS,
+        additional_measurements=("ah", "bb"),
+    )
     assert script.startswith("e\n")
     assert "add_meas(0 ah meas_ah)" in script
-    assert "add_meas(0 ai meas_ai)" in script
     assert "add_meas(0 bb meas_bb)" in script
-    assert "add_meas(0 ed meas_ed)" in script
-    assert "add_meas(0 ef meas_ef)" in script
+    assert "add_meas(0 ai meas_ai)" not in script
 
 
 def test_constant_current_and_loop_rendering() -> None:
@@ -77,7 +98,7 @@ def test_constant_current_and_loop_rendering() -> None:
     script = protocol.to_palmsens_methodscript()
     assert "loop loop_1 < 4i" in script
     assert "meas_loop_cp p i 10m 1 3" in script
-    assert "add_meas(0 ba meas_ba)" in script
+    assert "add_meas(" not in script
     assert "if p >= 2" in script
 
 
@@ -134,6 +155,8 @@ def test_strict_profile_failures() -> None:
         protocol.to_palmsens_methodscript(device=PalmSensDevice.EMSTAT4_LR)
     with pytest.raises(ValueError, match="Unsupported PalmSens device"):
         protocol.to_palmsens_methodscript(device="emstat_pico")
+    with pytest.raises(ValueError, match="Unsupported additional PalmSens measurement"):
+        protocol.to_palmsens_methodscript(additional_measurements=("zz",))
 
 
 def test_c_rate_without_capacity_raises_value_error() -> None:

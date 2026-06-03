@@ -165,6 +165,7 @@ class CyclingProtocol(BaseProtocol):
         scan_step_voltage_V: float | None = None,  # noqa: N803
         eis_dc_potential_V: float = 0.0,  # noqa: N803
         eis_dc_current_mA: float = 0.0,  # noqa: N803
+        additional_measurements: tuple[str, ...] = (),
     ) -> str:
         """Convert protocol to PalmSens MethodSCRIPT.
 
@@ -180,6 +181,8 @@ class CyclingProtocol(BaseProtocol):
                 `record.voltage_V` is used.
             eis_dc_potential_V: DC potential offset for potentiostatic EIS.
             eis_dc_current_mA: DC current offset for galvanostatic EIS.
+            additional_measurements: optional MethodSCRIPT variable type IDs to
+                measure with `add_meas`, such as `("ba",)`.
 
         Returns:
             MethodSCRIPT string representation of the protocol.
@@ -195,6 +198,7 @@ class CyclingProtocol(BaseProtocol):
             scan_step_voltage_V,
             eis_dc_potential_V,
             eis_dc_current_mA,
+            additional_measurements,
         )
 
     def to_tomato_mpg2(
