@@ -18,6 +18,7 @@ from ._core import (
     Step,
     Tag,
     VoltageScan,
+    Wait
 )
 from .protocol import (
     CyclingProtocol,
@@ -39,5 +40,6 @@ __all__ = [
     "Step",
     "Tag",
     "VoltageScan",
+    "Wait",
     "__version__",
 ]

@@ -153,6 +153,20 @@ class Step(BaseModel):
     id: str | None = Field(default=None, description="Optional ID for the technique step")
     model_config = ConfigDict(extra="forbid")
 
+class Wait(Step): # Note: Only exportable to palmsens currently
+    """Wait/rest step with the cell off.
+
+        Attributes:
+            until_time_s: Duration of step in seconds.
+    """
+
+    step: Literal["wait"] = Field(default="wait", frozen=True)
+    until_time_s: float = Field(gt=0)
+
+    @field_validator("until_time_s", mode="before")
+    @classmethod
+    def _allow_empty_string(cls, v: float | str) -> float | None:
+        return _empty_string_is_none(v)
 
 class OpenCircuitVoltage(Step):
     """Open circuit voltage step.
@@ -430,7 +444,8 @@ class Tag(Step):
 
 
 AnyTechnique = Annotated[
-    OpenCircuitVoltage
+    Wait
+    | OpenCircuitVoltage
     | ConstantCurrent
     | ConstantVoltage
     | ImpedanceSpectroscopy
