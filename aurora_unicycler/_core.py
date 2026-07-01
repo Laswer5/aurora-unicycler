@@ -177,12 +177,14 @@ class Temperature(Step): #TODO: lägg kontroll av temperatur i varje format
     Attributes:
         until_temp_c: Target temperature in degrees Celsius.
         wait_after_s: Duration to wait after reaching the target temperature.
+        ramp_rate: Rate of temperature increase
 
     """
 
     step: Literal["temperature"] = Field(default="temperature", frozen=True)
     until_temp_c: float = Field(description="Target temperature in degrees Celsius")
     wait_after_s: float = Field(gt=0)
+    ramp_rate: float | None = Field(gt=0) # default: float rampRate = 0.35 /60; // °C per minute ( /60)
 
     @field_validator("until_temp_c", "wait_after_s", mode="before")
     @classmethod
