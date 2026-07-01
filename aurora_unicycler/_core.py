@@ -153,11 +153,13 @@ class Step(BaseModel):
     id: str | None = Field(default=None, description="Optional ID for the technique step")
     model_config = ConfigDict(extra="forbid")
 
-class Wait(Step): # Note: Only exportable to palmsens currently
+
+class Wait(Step):  # Note: Only exportable to palmsens currently
     """Wait/rest step with the cell off.
 
-        Attributes:
-            until_time_s: Duration of step in seconds.
+    Attributes:
+        until_time_s: Duration of step in seconds.
+
     """
 
     step: Literal["wait"] = Field(default="wait", frozen=True)
@@ -167,6 +169,27 @@ class Wait(Step): # Note: Only exportable to palmsens currently
     @classmethod
     def _allow_empty_string(cls, v: float | str) -> float | None:
         return _empty_string_is_none(v)
+
+
+class Temperature(Step): #TODO: lägg kontroll av temperatur i varje format
+    """Temperature control step.
+
+    Attributes:
+        until_temp_c: Target temperature in degrees Celsius.
+        wait_after_s: Duration to wait after reaching the target temperature.
+
+    """
+
+    step: Literal["temperature"] = Field(default="temperature", frozen=True)
+    until_temp_c: float = Field(description="Target temperature in degrees Celsius")
+    wait_after_s: float = Field(gt=0)
+
+    @field_validator("until_temp_c", "wait_after_s", mode="before")
+    @classmethod
+    def _allow_empty_string(cls, v: float | str) -> float | None:
+        """Empty string is interpreted as None."""
+        return _empty_string_is_none(v)
+
 
 class OpenCircuitVoltage(Step):
     """Open circuit voltage step.
@@ -445,6 +468,7 @@ class Tag(Step):
 
 AnyTechnique = Annotated[
     Wait
+    | Temperature
     | OpenCircuitVoltage
     | ConstantCurrent
     | ConstantVoltage
