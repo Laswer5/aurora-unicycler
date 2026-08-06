@@ -52,11 +52,13 @@ from aurora_unicycler._formats import (
     battinfo,
     biologic,
     neware,
-    palmsens as palmsens_format,
     pybamm,
     tomato,
 )
-from aurora_unicycler.palmsens import PalmSensDevice
+from aurora_unicycler._formats import (
+    palmsens as palmsens_format,
+)
+from aurora_unicycler.palmsens import PalmSensDevice, PalmSensStopVoltageReference
 
 
 class CyclingProtocol(BaseProtocol):
@@ -166,6 +168,9 @@ class CyclingProtocol(BaseProtocol):
         eis_dc_potential_V: float = 0.0,  # noqa: N803
         eis_dc_current_mA: float = 0.0,  # noqa: N803
         additional_measurements: tuple[str, ...] = (),
+        stop_voltage_reference: PalmSensStopVoltageReference | str = (
+            PalmSensStopVoltageReference.WE_VS_RE
+        ),
     ) -> str:
         """Convert protocol to PalmSens MethodSCRIPT.
 
@@ -183,22 +188,25 @@ class CyclingProtocol(BaseProtocol):
             eis_dc_current_mA: DC current offset for galvanostatic EIS.
             additional_measurements: optional MethodSCRIPT variable type IDs to
                 measure with `add_meas`, such as `("ba",)`.
+            stop_voltage_reference: potential measurement used for constant-current
+                voltage cutoffs. Either `we_vs_re` (default) or `we_vs_ce`.
 
         Returns:
             MethodSCRIPT string representation of the protocol.
 
         """
         return palmsens_format.to_palmsens_methodscript(
-            self,
-            save_path,
-            sample_name,
-            capacity_mAh,
-            device,
-            channel,
-            scan_step_voltage_V,
-            eis_dc_potential_V,
-            eis_dc_current_mA,
-            additional_measurements,
+            protocol=self,
+            save_path=save_path,
+            sample_name=sample_name,
+            capacity_mAh=capacity_mAh,
+            device=device,
+            channel=channel,
+            scan_step_voltage_V=scan_step_voltage_V,
+            eis_dc_potential_V=eis_dc_potential_V,
+            eis_dc_current_mA=eis_dc_current_mA,
+            additional_measurements=additional_measurements,
+            stop_voltage_reference=stop_voltage_reference,
         )
 
     def to_tomato_mpg2(

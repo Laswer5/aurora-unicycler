@@ -19,6 +19,13 @@ class PalmSensDevice(StrEnum):
     NEXUS = "nexus"
 
 
+class PalmSensStopVoltageReference(StrEnum):
+    """Potential measurement used for constant-current voltage cutoffs."""
+
+    WE_VS_RE = "we_vs_re"
+    WE_VS_CE = "we_vs_ce"
+
+
 @dataclass(frozen=True)
 class MeasurementVariable:
     """A PalmSens MethodSCRIPT measurement variable."""
@@ -117,6 +124,7 @@ class _Renderer:
         eis_dc_potential_v: float,
         eis_dc_current_ma: float,
         additional_measurements: tuple[str, ...],
+        stop_voltage_reference: PalmSensStopVoltageReference,
     ) -> None:
         self.protocol = protocol
         self.profile = profile
@@ -125,6 +133,7 @@ class _Renderer:
         self.eis_dc_potential_v = eis_dc_potential_v
         self.eis_dc_current_ma = eis_dc_current_ma
         self.additional_measurements = additional_measurements
+        self.stop_voltage_reference = stop_voltage_reference
         self.loop_count = 0
 
     def render(self) -> list[str]:
@@ -149,7 +158,9 @@ class _Renderer:
         for step in self.protocol.method:
             if isinstance(step, _core.OpenCircuitVoltage):
                 vars_to_declare.append("p")
-            elif isinstance(step, _core.ConstantCurrent | _core.ConstantVoltage | _core.VoltageScan):
+            elif isinstance(
+                step, _core.ConstantCurrent | _core.ConstantVoltage | _core.VoltageScan
+            ):
                 vars_to_declare.extend(("p", "i"))
             elif isinstance(step, _core.ImpedanceSpectroscopy):
                 vars_to_declare.extend(("f", "z_real", "z_imag", "e_ac", "e_dc", "i_ac", "i_dc"))
@@ -158,7 +169,10 @@ class _Renderer:
     def _extra_var_declarations(self) -> list[str]:
         return [
             f"var {self._var_name(var.var_type)}"
-            for var in self._additional_measurement_variables()
+            for var in self._extra_measurement_variables(
+                set(),
+                self._required_stop_measurement_types(),
+            )
         ]
 
     def _render_range(self, start: int, end: int) -> list[str]:
@@ -239,6 +253,7 @@ class _Renderer:
     def _render_cc(self, step: _core.ConstantCurrent) -> list[str]:
         current_ma = self._step_current_ma(step)
         run_time_s = step.until_time_s or self._fallback_runtime_s()
+        required_measurements = self._cc_required_measurement_types(step)
         return [
             "# Constant current",
             "cell_off",
@@ -254,11 +269,11 @@ class _Renderer:
                     f"meas_loop_cp p i {self._ms_float(current_ma / 1000)} "
                     f"{self._ms_float(self.protocol.record.time_s)} "
                     f"{self._ms_float(run_time_s)}",
-                    self._add_meas_args({"ab"}),
+                    self._add_meas_args({"ab"}, required_measurements),
                     "time(t)",
                 ),
                 primary_vars=("p", "i"),
-                extra_vars=self._extra_measurement_variables({"ab"}),
+                extra_vars=self._extra_measurement_variables({"ab"}, required_measurements),
                 break_lines=self._cc_break_lines(step, current_ma),
             ),
         ]
@@ -373,10 +388,14 @@ class _Renderer:
         ]
         return "\n".join([command, *self._indent(body)])
 
-    def _add_meas_args(self, primary_var_types: set[str]) -> str:
+    def _add_meas_args(
+        self,
+        primary_var_types: set[str],
+        required_var_types: set[str] | None = None,
+    ) -> str:
         args = [
             f"add_meas({self.channel} {var.var_type} {self._var_name(var.var_type)})"
-            for var in self._extra_measurement_variables(primary_var_types)
+            for var in self._extra_measurement_variables(primary_var_types, required_var_types)
         ]
         return " ".join(args)
 
@@ -386,24 +405,52 @@ class _Renderer:
     def _extra_measurement_variables(
         self,
         primary_var_types: set[str],
+        required_var_types: set[str] | None = None,
     ) -> tuple[MeasurementVariable, ...]:
+        selected = set(self.additional_measurements)
+        selected.update(required_var_types or ())
         return tuple(
             var
-            for var in self._additional_measurement_variables()
-            if var.var_type not in primary_var_types
+            for var in self.profile.measurement_variables
+            if var.var_type in selected and var.var_type not in primary_var_types
         )
 
-    def _additional_measurement_variables(self) -> tuple[MeasurementVariable, ...]:
-        requested = set(self.additional_measurements)
-        return tuple(var for var in self.profile.measurement_variables if var.var_type in requested)
+    def _required_stop_measurement_types(self) -> set[str]:
+        if self.stop_voltage_reference is PalmSensStopVoltageReference.WE_VS_RE:
+            return set()
+        if any(
+            isinstance(step, _core.ConstantCurrent) and step.until_voltage_V is not None
+            for step in self.protocol.method
+        ):
+            return {"ag"}
+        return set()
+
+    def _cc_required_measurement_types(self, step: _core.ConstantCurrent) -> set[str]:
+        if (
+            self.stop_voltage_reference is PalmSensStopVoltageReference.WE_VS_CE
+            and step.until_voltage_V is not None
+        ):
+            return {"ag"}
+        return set()
 
     def _cc_break_lines(self, step: _core.ConstantCurrent, current_ma: float) -> list[str]:
         if step.until_voltage_V is None:
             return []
         op = ">=" if current_ma > 0 else "<="
+        potential_var = (
+            "p"
+            if self.stop_voltage_reference is PalmSensStopVoltageReference.WE_VS_RE
+            else self._var_name("ag")
+        )
+        potential_label = (
+            "potential"
+            if self.stop_voltage_reference is PalmSensStopVoltageReference.WE_VS_RE
+            else "WE vs CE potential"
+        )
         return [
-            f"# Stop when measured potential is {op} {self._ms_float(step.until_voltage_V)} V.",
-            f"if p {op} {self._ms_float(step.until_voltage_V)}",
+            f"# Stop when measured {potential_label} is {op} "
+            f"{self._ms_float(step.until_voltage_V)} V.",
+            f"if {potential_var} {op} {self._ms_float(step.until_voltage_V)}",
             "  breakloop",
             "endif",
         ]
@@ -480,6 +527,9 @@ def to_palmsens_methodscript(  # noqa: PLR0913
     eis_dc_potential_V: float = 0.0,  # noqa: N803
     eis_dc_current_mA: float = 0.0,  # noqa: N803
     additional_measurements: tuple[str, ...] = (),
+    stop_voltage_reference: PalmSensStopVoltageReference | str = (
+        PalmSensStopVoltageReference.WE_VS_RE
+    ),
 ) -> str:
     """Convert protocol to PalmSens MethodSCRIPT."""
     protocol = protocol.model_copy(deep=True)
@@ -489,6 +539,7 @@ def to_palmsens_methodscript(  # noqa: PLR0913
         protocol.sample.capacity_mAh = capacity_mAh
 
     profile = _normalize_profile(device)
+    stop_voltage_reference = _normalize_stop_voltage_reference(stop_voltage_reference)
 
     _utils.validate_capacity_c_rates(protocol)
     _utils.tag_to_indices(protocol)
@@ -504,6 +555,7 @@ def to_palmsens_methodscript(  # noqa: PLR0913
         eis_dc_potential_v=eis_dc_potential_V,
         eis_dc_current_ma=eis_dc_current_mA,
         additional_measurements=additional_measurements,
+        stop_voltage_reference=stop_voltage_reference,
     )
     methodscript = "\n".join(renderer.render())
 
@@ -528,6 +580,19 @@ def _normalize_profile(device: PalmSensDevice | str) -> PalmSensProfile:
         )
         raise ValueError(msg) from exc
     return PALMSENS_PROFILES[normalized]
+
+
+def _normalize_stop_voltage_reference(
+    reference: PalmSensStopVoltageReference | str,
+) -> PalmSensStopVoltageReference:
+    try:
+        return PalmSensStopVoltageReference(reference)
+    except ValueError as exc:
+        msg = (
+            f"Unsupported PalmSens stop voltage reference {reference!r}. "
+            "Supported values are we_vs_re and we_vs_ce."
+        )
+        raise ValueError(msg) from exc
 
 
 def _normalize_additional_measurements(
