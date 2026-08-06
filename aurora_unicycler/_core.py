@@ -211,6 +211,7 @@ class ConstantCurrent(Step):
         current_mA: (optional) The current applied in mA.
         until_time_s: Duration of step in seconds.
         until_voltage_V: End step when this voltage in V is reached.
+        stop_voltage_reference: Electrode reference used for the voltage stop condition.
 
     """
 
@@ -219,6 +220,7 @@ class ConstantCurrent(Step):
     current_mA: float | None = None
     until_time_s: float | None = None
     until_voltage_V: float | None = None
+    stop_voltage_reference: Literal["we_vs_re", "we_vs_ce"] = "we_vs_re"
 
     @field_validator("rate_C", mode="before")
     @classmethod
