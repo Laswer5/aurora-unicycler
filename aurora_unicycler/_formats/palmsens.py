@@ -135,8 +135,10 @@ class _Renderer:
             f"# PalmSens target: {self.profile.display_name}",
             *self._core_var_declarations(),
             *self._extra_var_declarations(),
+            *self._safety_var_declarations(),
             f"set_pgstat_chan {self.channel}",
             "timer_start",
+            *self._safety_initialization(),
             *self._render_range(0, len(self.protocol.method)),
             "on_finished:",
             "cell_off",
@@ -165,6 +167,40 @@ class _Renderer:
                 self._required_stop_measurement_types(),
             )
         ]
+
+    def _safety_var_declarations(self) -> list[str]:
+        if not self._has_safety_limits():
+            return []
+
+        variables = ["safety_violation"]
+        if self.protocol.safety.max_capacity_mAh is not None:
+            variables.extend(
+                (
+                    "safety_capacity",
+                    "safety_capacity_delta",
+                    "safety_previous_time",
+                    "safety_delta_time",
+                ),
+            )
+        if self.protocol.safety.delay_s:
+            variables.extend(("safety_active", "safety_started", "safety_elapsed"))
+        return [f"var {variable}" for variable in variables]
+
+    def _safety_initialization(self) -> list[str]:
+        if not self._has_safety_limits():
+            return []
+
+        lines = []
+        if self.protocol.safety.max_capacity_mAh is not None:
+            lines.extend(
+                (
+                    "store_var safety_capacity 0 aa",
+                    "store_var safety_previous_time 0 aa",
+                ),
+            )
+        if self.protocol.safety.delay_s:
+            lines.append("store_var safety_active 0i aa")
+        return lines
 
     def _render_range(self, start: int, end: int) -> list[str]:
         lines: list[str] = []
@@ -238,6 +274,7 @@ class _Renderer:
                 ),
                 primary_vars=("p",),
                 extra_vars=self._extra_measurement_variables({"ab"}),
+                potential_var="p",
             ),
         ]
 
@@ -265,6 +302,8 @@ class _Renderer:
                 ),
                 primary_vars=("p", "i"),
                 extra_vars=self._extra_measurement_variables({"ab"}, required_measurements),
+                potential_var="p",
+                current_var="i",
                 break_lines=self._cc_break_lines(step, current_ma),
             ),
         ]
@@ -294,6 +333,8 @@ class _Renderer:
                 ),
                 primary_vars=("p", "i"),
                 extra_vars=self._extra_measurement_variables({"ba"}),
+                potential_var="p",
+                current_var="i",
                 break_lines=self._cv_break_lines(step),
             ),
         ]
@@ -319,6 +360,8 @@ class _Renderer:
                 ),
                 primary_vars=("p", "i"),
                 extra_vars=self._extra_measurement_variables({"ba"}),
+                potential_var="p",
+                current_var="i",
             ),
         ]
 
@@ -340,6 +383,8 @@ class _Renderer:
                     f"{self._ms_float(self.eis_dc_potential_v)} "
                     "eis_acdc(e_ac e_dc i_ac i_dc) time(t)",
                     primary_vars=("f", "z_real", "z_imag", "e_ac", "e_dc", "i_ac", "i_dc"),
+                    potential_var="e_dc",
+                    current_var="i_dc",
                 ),
             ]
         assert step.amplitude_mA is not None  # noqa: S101
@@ -358,14 +403,18 @@ class _Renderer:
                 f"{self._ms_float(self.eis_dc_current_ma / 1000)} "
                 "eis_acdc(e_ac e_dc i_ac i_dc) time(t)",
                 primary_vars=("f", "z_real", "z_imag", "e_ac", "e_dc", "i_ac", "i_dc"),
+                potential_var="e_dc",
+                current_var="i_dc",
             ),
         ]
 
-    def _measurement_loop(
+    def _measurement_loop(  # noqa: PLR0913
         self,
         command: str,
         primary_vars: tuple[str, ...],
         extra_vars: tuple[MeasurementVariable, ...] = (),
+        potential_var: str | None = None,
+        current_var: str | None = None,
         break_lines: list[str] | None = None,
     ) -> str:
         body = [
@@ -374,10 +423,126 @@ class _Renderer:
             *(f"pck_add {var}" for var in primary_vars),
             *(f"pck_add {self._var_name(var.var_type)}" for var in extra_vars),
             "pck_end",
+            *self._capacity_update_lines(current_var),
+            *self._safety_check_lines(potential_var, current_var),
             *(break_lines or []),
             "endloop",
         ]
         return "\n".join([command, *self._indent(body)])
+
+    def _capacity_update_lines(self, current_var: str | None) -> list[str]:
+        if self.protocol.safety.max_capacity_mAh is None:
+            return []
+        if current_var is None:
+            return ["copy_var t safety_previous_time"]
+
+        return [
+            "copy_var t safety_delta_time",
+            "sub_var safety_delta_time safety_previous_time",
+            "copy_var t safety_previous_time",
+            f"copy_var {current_var} safety_capacity_delta",
+            "if safety_capacity_delta < 0",
+            "  mul_var safety_capacity_delta -1",
+            "endif",
+            "mul_var safety_capacity_delta safety_delta_time",
+            "div_var safety_capacity_delta 3600m",
+            "add_var safety_capacity safety_capacity_delta",
+        ]
+
+    def _safety_check_lines(
+        self,
+        potential_var: str | None,
+        current_var: str | None,
+    ) -> list[str]:
+        conditions = self._safety_conditions(potential_var, current_var)
+        if not conditions:
+            if self._has_safety_limits() and self.protocol.safety.delay_s:
+                return ["store_var safety_active 0i aa"]
+            return []
+
+        lines = ["# Enforce protocol safety limits.", "store_var safety_violation 0i aa"]
+        for condition in conditions:
+            lines.extend(
+                (
+                    f"if {condition}",
+                    "  store_var safety_violation 1i aa",
+                    "endif",
+                ),
+            )
+        lines.extend(self._safety_abort_lines())
+        return lines
+
+    def _safety_conditions(
+        self,
+        potential_var: str | None,
+        current_var: str | None,
+    ) -> list[str]:
+        safety = self.protocol.safety
+        conditions = []
+        if potential_var is not None:
+            if safety.max_voltage_V is not None:
+                conditions.append(
+                    f"{potential_var} >= {self._ms_float(safety.max_voltage_V)}",
+                )
+            if safety.min_voltage_V is not None:
+                conditions.append(
+                    f"{potential_var} <= {self._ms_float(safety.min_voltage_V)}",
+                )
+        if current_var is not None:
+            if safety.max_current_mA is not None:
+                conditions.append(
+                    f"{current_var} >= {self._ms_float(safety.max_current_mA / 1000)}",
+                )
+            if safety.min_current_mA is not None:
+                conditions.append(
+                    f"{current_var} <= {self._ms_float(safety.min_current_mA / 1000)}",
+                )
+        if safety.max_capacity_mAh is not None:
+            conditions.append(
+                f"safety_capacity >= {self._ms_float(safety.max_capacity_mAh)}",
+            )
+        return conditions
+
+    def _safety_abort_lines(self) -> list[str]:
+        delay_s = self.protocol.safety.delay_s or 0
+        if delay_s == 0:
+            return [
+                "if safety_violation != 0i",
+                '  send_string "SAFETY_LIMIT_EXCEEDED"',
+                "  abort",
+                "endif",
+            ]
+
+        return [
+            "if safety_violation != 0i",
+            "  if safety_active == 0i",
+            "    copy_var t safety_started",
+            "    store_var safety_active 1i aa",
+            "  else",
+            "    copy_var t safety_elapsed",
+            "    sub_var safety_elapsed safety_started",
+            f"    if safety_elapsed >= {self._ms_float(delay_s)}",
+            '      send_string "SAFETY_LIMIT_EXCEEDED"',
+            "      abort",
+            "    endif",
+            "  endif",
+            "else",
+            "  store_var safety_active 0i aa",
+            "endif",
+        ]
+
+    def _has_safety_limits(self) -> bool:
+        safety = self.protocol.safety
+        return any(
+            limit is not None
+            for limit in (
+                safety.max_voltage_V,
+                safety.min_voltage_V,
+                safety.max_current_mA,
+                safety.min_current_mA,
+                safety.max_capacity_mAh,
+            )
+        )
 
     def _add_meas_args(
         self,
@@ -589,6 +754,7 @@ def _validate_common(  # noqa: C901, PLR0912
     if protocol.record.time_s is None or protocol.record.time_s <= 0:
         msg = "PalmSens MethodSCRIPT export requires record.time_s."
         raise ValueError(msg)
+    _validate_safety(protocol.safety, profile)
     _validate_voltage(eis_dc_potential_v, profile)
     for step in protocol.method:
         match step:
@@ -616,6 +782,16 @@ def _validate_common(  # noqa: C901, PLR0912
             case _:
                 msg = f"to_palmsens_methodscript() does not support step type: {step.step}"
                 raise NotImplementedError(msg)
+
+
+def _validate_safety(safety: _core.SafetyParams, profile: PalmSensProfile) -> None:
+    """Validate configured safety thresholds against the instrument profile."""
+    for voltage_v in (safety.min_voltage_V, safety.max_voltage_V):
+        if voltage_v is not None:
+            _validate_voltage(voltage_v, profile)
+    for current_ma in (safety.min_current_mA, safety.max_current_mA):
+        if current_ma is not None:
+            _validate_current(current_ma, profile)
 
 
 def _validate_voltage(voltage_v: float, profile: PalmSensProfile) -> None:
