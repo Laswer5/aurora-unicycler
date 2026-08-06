@@ -204,8 +204,6 @@ class _Renderer:
 
     def _render_step(self, step: _core.AnyTechnique) -> list[str]:
         match step:
-            case _core.Wait():
-                return self._render_wait(step)
             case _core.OpenCircuitVoltage():
                 return self._render_ocv(step)
             case _core.ConstantCurrent():
@@ -219,13 +217,6 @@ class _Renderer:
             case _:
                 msg = f"to_palmsens_methodscript() does not support step type: {step.step}"
                 raise NotImplementedError(msg)
-
-    def _render_wait(self, step: _core.Wait) -> list[str]:
-        return [
-            f"# Wait {step.until_time_s}s",
-            "cell_off",
-            f"wait {self._ms_float(step.until_time_s)}"
-        ]
 
     def _render_ocv(self, step: _core.OpenCircuitVoltage) -> list[str]:
         return [
@@ -572,8 +563,6 @@ def _validate_common(  # noqa: C901, PLR0912
     _validate_voltage(eis_dc_potential_v, profile)
     for step in protocol.method:
         match step:
-            case _core.Wait():
-                pass
             case _core.OpenCircuitVoltage():
                 pass
             case _core.ConstantCurrent():
