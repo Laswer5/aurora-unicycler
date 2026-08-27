@@ -39,6 +39,7 @@ nav:
   - Installation: installation.md
   - Creating a protocol: protocol.md
   - Exporting a protocol:
+    - To BatteryDynamics JSON: batterydynamics.md
     - To Biologic mps: biologic.md
     - To Neware xml: neware.md
     - To PalmSens MethodSCRIPT: palmsens.md

@@ -38,6 +38,7 @@ my_protocol = CyclingProtocol.from_json("path/to/protocol.json")
 
 A unicycler CyclingProtocol object can be converted into:
 - Unicycler JSON file / dict - to_json() / to_dict()
+- BatteryDynamics task JSON file - to_batterydynamics_json()
 - Neware XML file  - to_neware_xml()
 - Biologic MPS settings - to_biologic_mps()
 - Tomato 0.2.3 JSON file - to_tomato_json()
@@ -49,12 +50,15 @@ from pathlib import Path
 
 from aurora_unicycler._core import BaseProtocol
 from aurora_unicycler._formats import (
+    batterydynamics,
     battinfo,
     biologic,
     neware,
-    palmsens as palmsens_format,
     pybamm,
     tomato,
+)
+from aurora_unicycler._formats import (
+    palmsens as palmsens_format,
 )
 from aurora_unicycler.palmsens import PalmSensDevice
 
@@ -65,6 +69,24 @@ class CyclingProtocol(BaseProtocol):
     Defines a battery cycling experiment, which can be converted to different formats for different
     cycler machine vendors.
     """
+
+    def to_batterydynamics_json(
+        self,
+        save_path: Path | str | None = None,
+    ) -> str:
+        """Convert the protocol to a self-contained BatteryDynamics task JSON file.
+
+        Metadata not represented by Unicycler, such as channel and BatteryDynamics
+        database IDs, is emitted empty. The resulting file contains one task.
+
+        Args:
+            save_path: (optional) File path at which to save the JSON file.
+
+        Returns:
+            JSON string containing a list with one BatteryDynamics task.
+
+        """
+        return batterydynamics.to_batterydynamics_json(self, save_path)
 
     # Add conversion methods to the base class, include docstrings here so mkdocs work
     def to_battinfo_jsonld(
